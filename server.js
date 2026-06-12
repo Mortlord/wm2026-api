@@ -1,7 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 const axios = require('axios');
 
 const app = express();
@@ -16,26 +14,14 @@ const COMPETITION = 'WC'; // FIFA World Cup
 // (standings + matches), alle 5 Minuten ist also sehr sicher.
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 Minuten
 
-const CACHE_FILE = path.join(__dirname, 'data', 'cache.json');
-
-function ensureDataDir() {
-  const dir = path.dirname(CACHE_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function readCache() {
-  ensureDataDir();
-  try {
-    return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'));
-  } catch (e) {
-    return { standings: null, matches: null, updatedAt: null, error: null };
-  }
-}
-
-function writeCache(data) {
-  ensureDataDir();
-  fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
-}
+// In-Memory-Cache. Kein Volume notwendig: bei Neustart wird der Cache
+// beim ersten refreshCache() sofort neu befuellt.
+let cache = {
+  standings: null,
+  matches: null,
+  updatedAt: null,
+  error: null,
+};
 
 const apiClient = axios.create({
   baseURL: API_BASE,
@@ -46,9 +32,7 @@ const apiClient = axios.create({
 async function refreshCache() {
   if (!API_TOKEN) {
     console.error('FOOTBALL_DATA_TOKEN ist nicht gesetzt. Bitte als Umgebungsvariable in Railway hinterlegen.');
-    const cache = readCache();
     cache.error = 'FOOTBALL_DATA_TOKEN fehlt auf dem Server.';
-    writeCache(cache);
     return;
   }
 
@@ -60,18 +44,16 @@ async function refreshCache() {
       apiClient.get(`/competitions/${COMPETITION}/matches`),
     ]);
 
-    const cache = {
+    cache = {
       standings: standingsRes.data.standings || [],
       matches: matchesRes.data.matches || [],
       updatedAt: new Date().toISOString(),
       error: null,
     };
 
-    writeCache(cache);
     console.log(`Cache aktualisiert: ${cache.matches.length} Spiele, ${cache.standings.length} Tabellen.`);
   } catch (err) {
     console.error('Fehler beim Abrufen von football-data.org:', err.message);
-    const cache = readCache();
     if (err.response && err.response.status === 429) {
       cache.error = 'Rate-Limit erreicht (zu viele Anfragen). Naechster Versuch in einigen Minuten.';
     } else if (err.response && err.response.status === 403) {
@@ -79,7 +61,8 @@ async function refreshCache() {
     } else {
       cache.error = `Fehler beim Abrufen: ${err.message}`;
     }
-    writeCache(cache);
+    // alte cache.standings/matches bleiben erhalten, falls vorhanden,
+    // damit die App weiter den letzten erfolgreichen Stand zeigen kann
   }
 }
 
@@ -88,21 +71,19 @@ app.use(express.json());
 
 // Gibt den kompletten Cache zurueck (Standings + Matches)
 app.get('/api/data', (req, res) => {
-  const cache = readCache();
   res.json(cache);
 });
 
 // Manuelles Refresh-Trigger (z.B. fuer Tests)
 app.post('/api/refresh', async (req, res) => {
   await refreshCache();
-  res.json(readCache());
+  res.json(cache);
 });
 
 app.get('/', (req, res) => {
-  const cache = readCache();
   res.json({
     status: 'ok',
-    message: 'WM 2026 Data API (football-data.org Proxy)',
+    message: 'WM 2026 Data API (football-data.org Proxy, in-memory cache)',
     lastUpdate: cache.updatedAt,
     hasError: !!cache.error,
   });
