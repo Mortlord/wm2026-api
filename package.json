@@ -1,0 +1,14 @@
+{
+  "name": "wm2026-api",
+  "version": "3.0.0",
+  "description": "Proxy/Cache API fuer WM 2026 Daten von football-data.org",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
